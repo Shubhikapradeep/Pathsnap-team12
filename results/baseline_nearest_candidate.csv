@@ -1,0 +1,3 @@
+partition,n_obs,nearest_candidate_top1
+train,183260,0.5598275673905926
+student_test,19160,0.5427453027139875
