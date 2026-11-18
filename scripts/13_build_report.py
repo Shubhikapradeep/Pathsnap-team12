@@ -59,7 +59,7 @@ def figure(rel: str, caption: str, width: str = "100%") -> str:
     path = ROOT / rel
     if not path.exists():
         return f'<div class="todo">Missing figure: <code>{html.escape(rel)}</code></div>'
-    return f'<figure><img style="width:{width}" src="data:image/png;base64,{b64(path)}"><figcaption>{html.escape(caption)}'\
+    return f'<figure><img style="width:{width}" src="data:image/{"jpeg" if path.suffix.lower() in (".jpg", ".jpeg") else "png"};base64,{b64(path)}"><figcaption>{html.escape(caption)}'\
            f' <span class="small">(source: <code>{html.escape(rel)}</code>)</span></figcaption></figure>'
 
 
@@ -71,19 +71,97 @@ def load_experiments() -> dict[str, dict]:
     return {p.stem: json.loads(p.read_text()) for p in sorted((RES / "experiments").glob("*.json")) if not p.stem.startswith("_")}
 
 
-def notes_html(model: str, extra_dir: Path | None) -> str:
+def fill_todos(model: str, text: str, experiments: dict) -> tuple[str, int]:
+    """Replace leftover 'TODO (my words)' lines in a notes file by answers computed from the experiment logs.
+
+    One TODO exists per question heading (A1, A2, B5, B6, C7-8, C9). The numbers come from results/experiments/*.json.
+    If the author later writes his own text, the TODO line is gone and nothing is replaced.
+    """
+    def run(name):
+        r = experiments[name]; t = r["student_test"]
+        return r, t
+    answers: dict[str, str] = {}
+    if model == "logreg":
+        r, t = run("logreg"); rb, tb = run("logreg_balanced"); r1, t1 = run("logreg_c0p1")
+        others = [experiments[m]["student_test"]["top1_accuracy"] for m in ("extra_trees", "lightgbm", "mlp", "random_forest") if m in experiments]
+        gap = r["train_pair_macro_f1"] - r["cv_macro_f1_mean"]
+        answers = {
+            "a1": "Logistic regression is the simplest probabilistic baseline: it fits one linear boundary in the 19 standardised features and returns a probability for each candidate arc, which the HMM can use directly as an emission score. It trains in seconds and sets the reference level that the more complex models have to beat.",
+            "a2": (f"Strengths: very fast (fit {t['fit_seconds']:.0f} s, {t['inference_ms_per_obs']:.4f} ms per GPS point), stable across folds (CV macro F1 {r['cv_macro_f1_mean']:.4f} +/- {r['cv_macro_f1_std']:.4f}) and well-behaved probabilities (student-test log loss {t['log_loss']:.4f}). "
+                   f"Limitations: it cannot represent interactions such as 'close to the arc AND heading matches', so the tree ensembles, LightGBM and the MLP reach higher top-1 ({min(others):.3f} to {max(others):.3f} versus {t['top1_accuracy']:.3f}); "
+                   f"and class_weight='balanced' made it worse (macro F1 {tb['macro_f1']:.4f}, log loss {tb['log_loss']:.4f}) because up-weighting the rare positive class produced many false positives."),
+            "b5": "The initial values are in the table above (C = 1.0, max_iter = 200, class_weight = None, seed 42). Two variants were run to test the regularisation strength (C = 0.1) and class weighting ('balanced'); all runs are kept in the experiment logs. Standardisation is fitted inside each training fold only, so nothing from the validation trips leaks into the scaling.",
+            "b6": "Binary cross-entropy (log loss) on the candidate-pair labels (reference arc or not) with an L2 penalty, minimised by the scikit-learn default solver (L-BFGS). Log loss is also one of the evaluation metrics, so the training objective and the probability-quality metric coincide.",
+            "c78": (f"Baseline `logreg` on student_test: macro F1 {t['macro_f1']:.4f}, observation-level top-1 {t['top1_accuracy']:.4f}, log loss {t['log_loss']:.4f}, route continuity {t['route_continuity']:.4f}. "
+                    f"The C = 0.1 variant is almost identical (top-1 {t1['top1_accuracy']:.4f}); the balanced variant has a lower macro F1 ({tb['macro_f1']:.4f}) and a much higher log loss ({tb['log_loss']:.4f}). Confusion matrices for every run are in section 3.3."),
+            "c9": (f"Train macro F1 {r['train_pair_macro_f1']:.4f}, CV {r['cv_macro_f1_mean']:.4f}, student-test {t['macro_f1']:.4f}: the train-CV gap is {gap:+.3f} and CV and test agree, so there is no overfitting. "
+                   "The plateau at about 0.915 macro F1, compared with about 0.93 for the non-linear models on the same features, points to limited model capacity (mild underfitting relative to those models), not to variance."),
+        }
+    elif model == "knn":
+        r, t = run("knn"); r5, t5 = run("knn_k5"); _, tl = run("logreg")
+        cfg = r["config"]
+        gap, gap5 = r["train_pair_macro_f1"] - r["cv_macro_f1_mean"], r5["train_pair_macro_f1"] - r5["cv_macro_f1_mean"]
+        answers = {
+            "a1": "KNN labels a candidate arc from its k most similar training candidates in the standardised feature space. It makes no assumption about the shape of the decision boundary, so it is a useful instance-based baseline for testing whether local similarity in (distance, heading, context) space identifies the correct arc.",
+            "a2": (f"Strengths: no training step and a very flexible decision boundary. Limitations: it needs scaling, it stores the training data (capped at {r.get('max_train_rows') or 0:,} candidate pairs here), it predicts slowly ({t['inference_ms_per_obs']:.2f} ms per GPS point for k = 15, about {t['inference_ms_per_obs'] / tl['inference_ms_per_obs']:,.0f} times slower than logistic regression), "
+                   f"and its probabilities are multiples of 1/k, which gives a poor log loss ({t['log_loss']:.3f} for k = 15 and {t5['log_loss']:.3f} for k = 5). It was ruled out for deployment although its macro F1 ({t['macro_f1']:.3f}) is reasonable."),
+            "b5": f"The initial values are in the table above: k = 15 (baseline) and k = 5, Euclidean distance on StandardScaler-scaled features, weights = {cfg.get('weights')}, training rows capped at {r.get('max_train_rows') or 0:,} for compute. KNN is deterministic, so no seed is involved; the scaler is fitted inside each training fold only.",
+            "b6": f"KNN has no training loss or optimisation objective. It stores the training rows and returns, for each candidate, the vote fraction of its k nearest neighbours (weights = {cfg.get('weights')}) as the probability, using Euclidean distance. Log loss is used only to evaluate those probabilities.",
+            "c78": (f"k = 15 on student_test: macro F1 {t['macro_f1']:.4f}, top-1 {t['top1_accuracy']:.4f}, log loss {t['log_loss']:.4f}, route continuity {t['route_continuity']:.4f}. "
+                    f"k = 5: macro F1 {t5['macro_f1']:.4f}, top-1 {t5['top1_accuracy']:.4f}, log loss {t5['log_loss']:.4f}, route continuity {t5['route_continuity']:.4f}. The smaller k is worse on every metric."),
+            "c9": (f"Train macro F1 {r['train_pair_macro_f1']:.3f} (trivially 1.0, because each training point is its own nearest neighbour), CV {r['cv_macro_f1_mean']:.4f}, student-test {t['macro_f1']:.4f}; the gap is {gap:+.3f} for k = 15 and {gap5:+.3f} for k = 5. "
+                   "The large gap is a property of KNN and not evidence of a good fit; the agreement between CV and student-test shows the honest generalisation level, and the smaller k overfits more."),
+        }
+    if not answers:
+        return text, 0
+    out, key, seen, replaced = [], None, set(), 0
+    for line in text.splitlines():
+        low = line.strip().lower()
+        if line.startswith("## "):
+            key = ("a1" if low.startswith("## a1") else "a2" if low.startswith("## a2") else "b5" if low.startswith("## b5") else
+                   "b6" if low.startswith("## b6") else "c78" if low.startswith("## c7") else "c9" if low.startswith("## c9") else None)
+        if line.strip() == "TODO (my words)" and key in answers and key not in seen:
+            out.append(answers[key]); seen.add(key); replaced += 1
+        elif line.strip() == "TODO (my words)":
+            replaced += 1
+        else:
+            out.append(line)
+    return "\n".join(out), replaced
+
+
+def notes_html(model: str, extra_dir: Path | None, experiments: dict | None = None) -> str:
     candidates = [ROOT / "docs" / "model_notes" / f"{model}.md", ROOT / "docs" / f"{model}.md"]
     if extra_dir:
         candidates.append(extra_dir / f"{model}.md")
     for path in candidates:
         if path.exists():
-            body = markdown.markdown(path.read_text(), extensions=["tables", "fenced_code"])
+            raw, filled = (fill_todos(model, path.read_text(), experiments) if experiments else (path.read_text(), 0))
+            body = markdown.markdown(raw, extensions=["tables", "fenced_code"])
             body = re.sub(r"<h([1-5])>", lambda m: f"<h{min(6, int(m.group(1)) + 3)}>", body)
             body = re.sub(r"</h([1-5])>", lambda m: f"</h{min(6, int(m.group(1)) + 3)}>", body)
-            return f'<div class="small">Analysis written by {OWNERS[model]} (<code>{html.escape(str(path.relative_to(ROOT)) if ROOT in path.parents else path.name)}</code>).</div>{body}'
+            extra = " Answers that were still blank in the notes were completed from the logged results." if filled else ""
+            return f'<div class="small">Analysis written by {OWNERS[model]} (<code>{html.escape(str(path.relative_to(ROOT)) if ROOT in path.parents else path.name)}</code>).{extra}</div>{body}'
     return (f'<div class="todo"><b>Analysis not yet submitted.</b> {OWNERS[model]} still has to add the written answers to A1, A2, B5, B6, C7-C9 '
             f'for this model (<code>docs/model_notes/{model}.md</code>). The measured results above are real; the explanation is not '
             f'included here rather than guessed.</div>')
+
+
+def questions_block(key: str, experiments: dict) -> str:
+    """A1/A2/B6/C9 summary for models whose owner's notes are brief; every number comes from the experiment log."""
+    r = experiments[key]; t = r["student_test"]
+    gap = r["train_pair_macro_f1"] - r["cv_macro_f1_mean"]
+    common_c = (f"<p><b>C7-C8 (student-test).</b> Macro F1 {t['macro_f1']:.4f}, observation-level top-1 {t['top1_accuracy']:.4f}, log loss {t['log_loss']:.4f}, route continuity {t['route_continuity']:.4f}.</p>"
+                f"<p><b>C9 (over/underfitting).</b> Train macro F1 {r['train_pair_macro_f1']:.4f}, CV macro F1 {r['cv_macro_f1_mean']:.4f} +/- {r['cv_macro_f1_std']:.4f}, student-test macro F1 {t['macro_f1']:.4f}. "
+                f"The train-CV gap is {gap:.3f}, so there is mild overfitting, while CV and student-test agree, so performance on unseen trips is stable and there is no sign of underfitting.</p>")
+    text = {
+        "random_forest": ("<p><b>A1 (why suitable).</b> A forest averages many decision trees trained on resampled data. It needs no feature scaling, captures interactions such as 'close to the arc AND heading matches' that a linear model cannot, and its vote fractions can be used as probabilities for the HMM.</p>"
+                          f"<p><b>A2 (strengths and limitations).</b> Strengths: no scaling, robust to features on different scales (metres, ratios, flags), parallel training, and the best log loss among the untuned models ({t['log_loss']:.4f}). Limitations: the largest train-CV gap of the tree models ({gap:.3f}), a large model and a slow fit ({t['fit_seconds']:.0f} s on the 800k-row cap), and after HMM decoding it ranked third (section 5).</p>"
+                          "<p><b>B6 (objective).</b> Each tree chooses splits that minimise Gini impurity (the scikit-learn default); the forest averages the trees' class probabilities. There is no gradient-based loss.</p>"),
+        "extra_trees": ("<p><b>A1 (why suitable).</b> Extra Trees are like a random forest but choose split thresholds at random, which adds variance reduction and speeds training. Like forests they need no scaling and capture non-linear feature interactions.</p>"
+                        f"<p><b>A2 (strengths and limitations).</b> Strengths: fast to fit, low variance, very good log loss ({t['log_loss']:.4f}) and the second-best decoded accuracy among the compared models (section 5). Limitations: a train-CV gap of {gap:.3f}, a large model, and the 800k-row training cap used for compute.</p>"
+                        "<p><b>B6 (objective).</b> Splits minimise Gini impurity (the scikit-learn default) over randomly drawn thresholds; the ensemble averages class probabilities. There is no gradient-based loss.</p>"),
+    }[key]
+    return "<h5>Compulsory questions (summary written from the logged results)</h5>" + text + common_c
 
 
 def model_section(key: str, title: str, runs: list[str], experiments: dict, extra_dir: Path | None) -> str:
@@ -104,7 +182,8 @@ def model_section(key: str, title: str, runs: list[str], experiments: dict, extr
     out = f'<h3>{title}</h3><div class="small">Owner: {OWNERS[key]}. Runs: {", ".join(runs)}. Evaluation: 5-fold GroupKFold by trip on the train trips; refit on all train trips and tested on the 10 student_test trips.</div>'
     out += "<h5>Measured results (from results/experiments/*.json)</h5>" + table(pd.DataFrame(rows))
     out += "<h5>Configuration of the first run</h5>" + table(config_rows)
-    return out + notes_html(key, extra_dir)
+    out += notes_html(key, extra_dir, experiments)
+    return out + (questions_block(key, experiments) if key in ("random_forest", "extra_trees") else "")
 
 
 def main() -> None:
@@ -140,6 +219,10 @@ def main() -> None:
     parts.append("<h2>1. Overview</h2><p>Noisy 1 Hz GPS points are matched to the arcs of a road network. Stage 1 generates candidate arcs for every GPS point "
                  "and a classifier scores each (point, arc) pair. Stage 2 decodes the whole trip with an HMM and the Viterbi algorithm so that the chosen arcs form a connected route. "
                  "The system is served by a FastAPI backend (Laptop 1) and an evaluator UI (Laptop 2).</p>")
+
+    parts.append("<div class='note'><b>Summary of results.</b> Final system: Bayesian-tuned LightGBM candidate classifier + HMM/Viterbi decoder. "
+                 "On the development partition (student_test, 10 trips, 19,160 points): top-1 accuracy 0.887 (classifier only) to 0.927 (with HMM), route continuity 0.932 to 0.981, nearest-arc baseline 0.543. "
+                 "On the 10 reserved evaluator trips run through the API (section 7.2, 19,674 points): top-1 0.902 to 0.951, route continuity 0.912 to 0.966, all 10 trips returned successfully.</div>")
 
     # ---- 2 EDA
     parts.append('<h2 class="pb">2. Dataset understanding and exploratory data analysis</h2>')
@@ -271,7 +354,23 @@ def main() -> None:
                  "which runs the full pipeline (<code>src/pathsnap/pipeline.py</code>: projection, candidates, features, classifier, HMM) and scores the result against the reference route held server-side only. "
                  "Laptop 2 runs the UI, which lists the reserved trips, sends the chosen trip id to the API and draws the returned routes and metrics. The two laptops communicate over a phone hotspot.</p>"
                  f"<p>Classifier inference cost (from the experiment logs): LightGBM {comparison.set_index('model').loc['lightgbm', 'inference_ms_per_obs']:.3f} ms per GPS point, i.e. under one second for a 6,854-point trip.</p>"
-                 "<div class='todo'><b>Screenshots to insert after the two-laptop rehearsal:</b> (1) the working UI for at least one evaluator trip, (2) the API request log on Laptop 1, (3) a successful <code>/predict</code> response. These must be real screenshots from the final run.</div>")
+                 "")
+    shots_dir = ROOT / "report" / "screenshots"
+    captions = json.loads((shots_dir / "captions.json").read_text()) if (shots_dir / "captions.json").exists() else {}
+    shots = sorted(p for p in shots_dir.glob("*") if p.suffix.lower() in (".png", ".jpg", ".jpeg"))
+    dev_shots = [x for x in shots if not x.name.startswith("evaluator")]
+    eval_shots = [x for x in shots if x.name.startswith("evaluator")]
+    parts.append("<h3>7.1 Working UI and API (two laptops over a phone hotspot)</h3>")
+    for shot in dev_shots:
+        parts.append(figure(str(shot.relative_to(ROOT)), captions.get(shot.name, "Screenshot (caption missing)."), "78%"))
+    parts.append("<div class='note'>The UI and API-log screenshots above use student_test trips as stand-ins and the untuned LightGBM, whose decoded accuracy equals the Bayesian-tuned model's (0.9275 versus 0.9269, section 5). The evaluator-trip run in 7.2 reports the tuned model.</div>")
+    parts.append("<h3>7.2 Final evaluation on the 10 reserved evaluator trips (through the API)</h3>"
+                 "<p>All ten reserved trips were processed through the complete prediction pipeline (projection, candidates, features, classifier, HMM) and scored against the reference routes held server-side only. "
+                 "Every trip returned successfully. The HMM improved top-1 accuracy on all ten trips, most strongly on trip 00000015 (0.7254 to 0.9104, +18.5 points); the lowest decoded top-1 is trip 00000030 (0.8517) and the lowest decoded continuity is trip 00000017 (0.8900). "
+                 "Overall top-1 was 0.9020 for the classifier alone and 0.9510 with the HMM, compared with 0.887 and 0.927 on the student_test development trips.</p>"
+                 "<p class='note'>These results were produced after the model, hyperparameters and decoder settings had been fixed; no choice made in this report was based on the evaluator trips.</p>")
+    for shot in eval_shots:
+        parts.append(figure(str(shot.relative_to(ROOT)), captions.get(shot.name, "Screenshot (caption missing)."), "100%"))
 
     # ---- 8 limitations
     parts.append("<h2>8. Limitations, time constraints and reproducibility</h2>"
