@@ -54,32 +54,11 @@ Alternative if Tanish prefers Python: Streamlit + `streamlit-folium`. Decide onc
   drop). Format as percentages with one decimal.
 * Settings dialog: API base URL, saved in `localStorage`, plus a "Test connection" button that calls `GET /health`.
 
-## API contract (agree with Atharva; change it only together and update this file)
-Coordinates are **[lat, lon]** in responses (Leaflet order). Raw `.track` files are lon,lat – the API converts.
-
-`GET /health` -> `{"status": "ok", "model": "<name>", "version": "<git short hash>"}`
-
-`GET /trips` -> `[{"trip_id": "00000015", "n_points": 6854}, ...]`   (ten items; no labels, no route lengths)
-
-`POST /predict/{trip_id}` -> 200
-```json
-{
-  "trip_id": "00000015",
-  "n_points": 6854,
-  "gps": [[50.8277, 4.7538, 1.0], "...[lat, lon, t_seconds]"],
-  "classifier_route": {"arc_ids": [12, 13], "polyline": [[50.82, 4.75], "..."]},
-  "hmm_route":        {"arc_ids": [12, 13], "polyline": [[50.82, 4.75], "..."]},
-  "per_point": {"hmm_arc": [12, 12, 13], "classifier_arc": [12, 40, 13]},
-  "metrics": {
-    "top1_accuracy": 0.923, "route_continuity": 0.981, "route_arc_f1": 0.958,
-    "classifier_only": {"top1_accuracy": 0.870, "route_continuity": 0.904, "route_arc_f1": 0.880}
-  },
-  "timing": {"seconds": 2.4},
-  "warnings": ["reference route covers only part of the GPS track"]
-}
-```
-Errors: `404 {"detail": "unknown trip"}`, `500 {"detail": "..."}`. Show `detail` text in a dismissible banner and keep the
-rest of the UI usable. Render `warnings[]` as a visible notice under the metrics (do not drop them).
+## API contract
+The contract is **final and lives in `docs/API_CONTRACT.md`** (machine-readable: `api/schemas.py`; real example: `ui/mock/predict_example.json`).
+Key points for the UI: coordinates are `[lat, lon]`; routes arrive as `segments` (list of polylines) - draw each
+segment separately; the HMM route may be joined with a thin dashed line between segments, the classifier-only
+route must stay fragmented; display every string in `warnings[]`.
 
 ## Error and edge states (each needs a visible, readable message)
 API unreachable / CORS blocked -> banner "Cannot reach API at <url>" + Retry; timeout after 60 s; unknown trip;
@@ -95,13 +74,12 @@ double-click on Run (ignore while a request is in flight).
   Cache the Leaflet files locally under `ui/vendor/` as a fallback if the venue Wi-Fi is bad.
 
 ## Working before the API exists
-Start against a static `ui/mock/predict_example.json` and a tiny mock server (or `fetch` to the file), clearly named
+Start against the static `ui/mock/predict_example.json` and `ui/mock/trips_example.json` (already in the repo; `fetch` them), clearly named
 `mock`, and **remove the mock switch from the demo build**. Switch to Atharva's real API as soon as `/trips` and
 `/predict` exist.
 
 ## Running across two laptops (do this test early, not on demo day)
-1. Same network. University/venue Wi-Fi often isolates clients (laptops cannot see each other); if so use a
-   phone hotspot or an ethernet cable/adapter.
+1. Both laptops on the **phone hotspot** (decided). Venue Wi-Fi often isolates clients. Full steps: `docs/API_CONTRACT.md`.
 2. On Laptop 1 (Mac): `ipconfig getifaddr en0` gives the IP. API must bind `0.0.0.0` and enable CORS for the UI origin.
 3. macOS firewall may prompt to allow incoming connections for Python: allow it.
 4. On Laptop 2 open the UI, set the API URL to `http://<laptop1-ip>:8000`, press Test connection.
