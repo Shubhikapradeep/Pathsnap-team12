@@ -277,9 +277,11 @@ def main() -> None:
     shots = sorted(p for p in shots_dir.glob("*") if p.suffix.lower() in (".png", ".jpg", ".jpeg"))
     for shot in shots:
         parts.append(figure(str(shot.relative_to(ROOT)), captions.get(shot.name, "Screenshot (caption missing in report/screenshots/captions.json)."), "78%"))
-    if not any("ui" in shot.name.lower() for shot in shots):
-        parts.append("<div class='todo'><b>Still to add:</b> a screenshot of the working evaluator UI on Laptop 2, and API log lines for an evaluator trip run with the final model. "
-                     "Put them in <code>report/screenshots/</code>, describe them in <code>captions.json</code> and re-run this script.</div>")
+    if not any(shot.name.lower().startswith("ui") for shot in shots):
+        parts.append("<div class='todo'><b>Still to add:</b> a screenshot of the working evaluator UI on Laptop 2 (put it in <code>report/screenshots/</code>, name starting with ui, describe it in <code>captions.json</code>).</div>")
+    if not any("evaluator_trip" in shot.name.lower() for shot in shots):
+        parts.append("<div class='note'>The screenshots above use student_test trips as stand-ins for the evaluator trips, and the LightGBM model whose decoded accuracy equals the Bayesian-tuned model's (section 5). "
+                     "No screenshot of an evaluator-trip run is included.</div>")
 
     # ---- 8 limitations
     parts.append("<h2>8. Limitations, time constraints and reproducibility</h2>"
