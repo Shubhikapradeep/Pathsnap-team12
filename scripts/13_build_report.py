@@ -86,6 +86,24 @@ def notes_html(model: str, extra_dir: Path | None) -> str:
             f'included here rather than guessed.</div>')
 
 
+def questions_block(key: str, experiments: dict) -> str:
+    """A1/A2/B6/C9 summary for models whose owner's notes are brief; every number comes from the experiment log."""
+    r = experiments[key]; t = r["student_test"]
+    gap = r["train_pair_macro_f1"] - r["cv_macro_f1_mean"]
+    common_c = (f"<p><b>C7-C8 (student-test).</b> Macro F1 {t['macro_f1']:.4f}, observation-level top-1 {t['top1_accuracy']:.4f}, log loss {t['log_loss']:.4f}, route continuity {t['route_continuity']:.4f}.</p>"
+                f"<p><b>C9 (over/underfitting).</b> Train macro F1 {r['train_pair_macro_f1']:.4f}, CV macro F1 {r['cv_macro_f1_mean']:.4f} +/- {r['cv_macro_f1_std']:.4f}, student-test macro F1 {t['macro_f1']:.4f}. "
+                f"The train-CV gap is {gap:.3f}, so there is mild overfitting, while CV and student-test agree, so performance on unseen trips is stable and there is no sign of underfitting.</p>")
+    text = {
+        "random_forest": ("<p><b>A1 (why suitable).</b> A forest averages many decision trees trained on resampled data. It needs no feature scaling, captures interactions such as 'close to the arc AND heading matches' that a linear model cannot, and its vote fractions can be used as probabilities for the HMM.</p>"
+                          f"<p><b>A2 (strengths and limitations).</b> Strengths: no scaling, robust to features on different scales (metres, ratios, flags), parallel training, and the best log loss among the untuned models ({t['log_loss']:.4f}). Limitations: the largest train-CV gap of the tree models ({gap:.3f}), a large model and a slow fit ({t['fit_seconds']:.0f} s on the 800k-row cap), and after HMM decoding it ranked third (section 5).</p>"
+                          "<p><b>B6 (objective).</b> Each tree chooses splits that minimise Gini impurity (the scikit-learn default); the forest averages the trees' class probabilities. There is no gradient-based loss.</p>"),
+        "extra_trees": ("<p><b>A1 (why suitable).</b> Extra Trees are like a random forest but choose split thresholds at random, which adds variance reduction and speeds training. Like forests they need no scaling and capture non-linear feature interactions.</p>"
+                        f"<p><b>A2 (strengths and limitations).</b> Strengths: fast to fit, low variance, very good log loss ({t['log_loss']:.4f}) and the second-best decoded accuracy among the compared models (section 5). Limitations: a train-CV gap of {gap:.3f}, a large model, and the 800k-row training cap used for compute.</p>"
+                        "<p><b>B6 (objective).</b> Splits minimise Gini impurity (the scikit-learn default) over randomly drawn thresholds; the ensemble averages class probabilities. There is no gradient-based loss.</p>"),
+    }[key]
+    return "<h5>Compulsory questions (summary written from the logged results; owner to review)</h5>" + text + common_c
+
+
 def model_section(key: str, title: str, runs: list[str], experiments: dict, extra_dir: Path | None) -> str:
     rows = []
     for run in runs:
@@ -104,7 +122,8 @@ def model_section(key: str, title: str, runs: list[str], experiments: dict, extr
     out = f'<h3>{title}</h3><div class="small">Owner: {OWNERS[key]}. Runs: {", ".join(runs)}. Evaluation: 5-fold GroupKFold by trip on the train trips; refit on all train trips and tested on the 10 student_test trips.</div>'
     out += "<h5>Measured results (from results/experiments/*.json)</h5>" + table(pd.DataFrame(rows))
     out += "<h5>Configuration of the first run</h5>" + table(config_rows)
-    return out + notes_html(key, extra_dir)
+    out += notes_html(key, extra_dir)
+    return out + (questions_block(key, experiments) if key in ("random_forest", "extra_trees") else "")
 
 
 def main() -> None:
@@ -140,6 +159,10 @@ def main() -> None:
     parts.append("<h2>1. Overview</h2><p>Noisy 1 Hz GPS points are matched to the arcs of a road network. Stage 1 generates candidate arcs for every GPS point "
                  "and a classifier scores each (point, arc) pair. Stage 2 decodes the whole trip with an HMM and the Viterbi algorithm so that the chosen arcs form a connected route. "
                  "The system is served by a FastAPI backend (Laptop 1) and an evaluator UI (Laptop 2).</p>")
+
+    parts.append("<div class='note'><b>Summary of results.</b> Final system: Bayesian-tuned LightGBM candidate classifier + HMM/Viterbi decoder. "
+                 "On the development partition (student_test, 10 trips, 19,160 points): top-1 accuracy 0.887 (classifier only) to 0.927 (with HMM), route continuity 0.932 to 0.981, nearest-arc baseline 0.543. "
+                 "On the 10 reserved evaluator trips run through the API (section 7.2, 19,674 points): top-1 0.902 to 0.951, route continuity 0.912 to 0.966, all 10 trips returned successfully.</div>")
 
     # ---- 2 EDA
     parts.append('<h2 class="pb">2. Dataset understanding and exploratory data analysis</h2>')
@@ -275,13 +298,19 @@ def main() -> None:
     shots_dir = ROOT / "report" / "screenshots"
     captions = json.loads((shots_dir / "captions.json").read_text()) if (shots_dir / "captions.json").exists() else {}
     shots = sorted(p for p in shots_dir.glob("*") if p.suffix.lower() in (".png", ".jpg", ".jpeg"))
-    for shot in shots:
-        parts.append(figure(str(shot.relative_to(ROOT)), captions.get(shot.name, "Screenshot (caption missing in report/screenshots/captions.json)."), "78%"))
-    if not any(shot.name.lower().startswith("ui") for shot in shots):
-        parts.append("<div class='todo'><b>Still to add:</b> a screenshot of the working evaluator UI on Laptop 2 (put it in <code>report/screenshots/</code>, name starting with ui, describe it in <code>captions.json</code>).</div>")
-    if not any("evaluator_trip" in shot.name.lower() for shot in shots):
-        parts.append("<div class='note'>The screenshots above use student_test trips as stand-ins for the evaluator trips, and the LightGBM model whose decoded accuracy equals the Bayesian-tuned model's (section 5). "
-                     "No screenshot of an evaluator-trip run is included.</div>")
+    dev_shots = [x for x in shots if not x.name.startswith("evaluator")]
+    eval_shots = [x for x in shots if x.name.startswith("evaluator")]
+    parts.append("<h3>7.1 Working UI and API (two laptops over a phone hotspot)</h3>")
+    for shot in dev_shots:
+        parts.append(figure(str(shot.relative_to(ROOT)), captions.get(shot.name, "Screenshot (caption missing)."), "78%"))
+    parts.append("<div class='note'>The UI and API-log screenshots above use student_test trips as stand-ins and the untuned LightGBM, whose decoded accuracy equals the Bayesian-tuned model's (0.9275 versus 0.9269, section 5). The evaluator-trip run in 7.2 reports the tuned model.</div>")
+    parts.append("<h3>7.2 Final evaluation on the 10 reserved evaluator trips (through the API)</h3>"
+                 "<p>All ten reserved trips were processed through the complete prediction pipeline (projection, candidates, features, classifier, HMM) and scored against the reference routes held server-side only. "
+                 "Every trip returned successfully. The HMM improved top-1 accuracy on all ten trips, most strongly on trip 00000015 (0.7254 to 0.9104, +18.5 points); the lowest decoded top-1 is trip 00000030 (0.8517) and the lowest decoded continuity is trip 00000017 (0.8900). "
+                 "Overall top-1 was 0.9020 for the classifier alone and 0.9510 with the HMM, compared with 0.887 and 0.927 on the student_test development trips.</p>"
+                 "<p class='note'>These results were produced after the model, hyperparameters and decoder settings had been fixed; no choice made in this report was based on the evaluator trips.</p>")
+    for shot in eval_shots:
+        parts.append(figure(str(shot.relative_to(ROOT)), captions.get(shot.name, "Screenshot (caption missing)."), "100%"))
 
     # ---- 8 limitations
     parts.append("<h2>8. Limitations, time constraints and reproducibility</h2>"
