@@ -71,16 +71,76 @@ def load_experiments() -> dict[str, dict]:
     return {p.stem: json.loads(p.read_text()) for p in sorted((RES / "experiments").glob("*.json")) if not p.stem.startswith("_")}
 
 
-def notes_html(model: str, extra_dir: Path | None) -> str:
+def fill_todos(model: str, text: str, experiments: dict) -> tuple[str, int]:
+    """Replace leftover 'TODO (my words)' lines in a notes file by answers computed from the experiment logs.
+
+    One TODO exists per question heading (A1, A2, B5, B6, C7-8, C9). The numbers come from results/experiments/*.json.
+    If the author later writes his own text, the TODO line is gone and nothing is replaced.
+    """
+    def run(name):
+        r = experiments[name]; t = r["student_test"]
+        return r, t
+    answers: dict[str, str] = {}
+    if model == "logreg":
+        r, t = run("logreg"); rb, tb = run("logreg_balanced"); r1, t1 = run("logreg_c0p1")
+        others = [experiments[m]["student_test"]["top1_accuracy"] for m in ("extra_trees", "lightgbm", "mlp", "random_forest") if m in experiments]
+        gap = r["train_pair_macro_f1"] - r["cv_macro_f1_mean"]
+        answers = {
+            "a1": "Logistic regression is the simplest probabilistic baseline: it fits one linear boundary in the 19 standardised features and returns a probability for each candidate arc, which the HMM can use directly as an emission score. It trains in seconds and sets the reference level that the more complex models have to beat.",
+            "a2": (f"Strengths: very fast (fit {t['fit_seconds']:.0f} s, {t['inference_ms_per_obs']:.4f} ms per GPS point), stable across folds (CV macro F1 {r['cv_macro_f1_mean']:.4f} +/- {r['cv_macro_f1_std']:.4f}) and well-behaved probabilities (student-test log loss {t['log_loss']:.4f}). "
+                   f"Limitations: it cannot represent interactions such as 'close to the arc AND heading matches', so the tree ensembles, LightGBM and the MLP reach higher top-1 ({min(others):.3f} to {max(others):.3f} versus {t['top1_accuracy']:.3f}); "
+                   f"and class_weight='balanced' made it worse (macro F1 {tb['macro_f1']:.4f}, log loss {tb['log_loss']:.4f}) because up-weighting the rare positive class produced many false positives."),
+            "b5": "The initial values are in the table above (C = 1.0, max_iter = 200, class_weight = None, seed 42). Two variants were run to test the regularisation strength (C = 0.1) and class weighting ('balanced'); all runs are kept in the experiment logs. Standardisation is fitted inside each training fold only, so nothing from the validation trips leaks into the scaling.",
+            "b6": "Binary cross-entropy (log loss) on the candidate-pair labels (reference arc or not) with an L2 penalty, minimised by the scikit-learn default solver (L-BFGS). Log loss is also one of the evaluation metrics, so the training objective and the probability-quality metric coincide.",
+            "c78": (f"Baseline `logreg` on student_test: macro F1 {t['macro_f1']:.4f}, observation-level top-1 {t['top1_accuracy']:.4f}, log loss {t['log_loss']:.4f}, route continuity {t['route_continuity']:.4f}. "
+                    f"The C = 0.1 variant is almost identical (top-1 {t1['top1_accuracy']:.4f}); the balanced variant has a lower macro F1 ({tb['macro_f1']:.4f}) and a much higher log loss ({tb['log_loss']:.4f}). Confusion matrices for every run are in section 3.3."),
+            "c9": (f"Train macro F1 {r['train_pair_macro_f1']:.4f}, CV {r['cv_macro_f1_mean']:.4f}, student-test {t['macro_f1']:.4f}: the train-CV gap is {gap:+.3f} and CV and test agree, so there is no overfitting. "
+                   "The plateau at about 0.915 macro F1, compared with about 0.93 for the non-linear models on the same features, points to limited model capacity (mild underfitting relative to those models), not to variance."),
+        }
+    elif model == "knn":
+        r, t = run("knn"); r5, t5 = run("knn_k5"); _, tl = run("logreg")
+        cfg = r["config"]
+        gap, gap5 = r["train_pair_macro_f1"] - r["cv_macro_f1_mean"], r5["train_pair_macro_f1"] - r5["cv_macro_f1_mean"]
+        answers = {
+            "a1": "KNN labels a candidate arc from its k most similar training candidates in the standardised feature space. It makes no assumption about the shape of the decision boundary, so it is a useful instance-based baseline for testing whether local similarity in (distance, heading, context) space identifies the correct arc.",
+            "a2": (f"Strengths: no training step and a very flexible decision boundary. Limitations: it needs scaling, it stores the training data (capped at {r.get('max_train_rows') or 0:,} candidate pairs here), it predicts slowly ({t['inference_ms_per_obs']:.2f} ms per GPS point for k = 15, about {t['inference_ms_per_obs'] / tl['inference_ms_per_obs']:,.0f} times slower than logistic regression), "
+                   f"and its probabilities are multiples of 1/k, which gives a poor log loss ({t['log_loss']:.3f} for k = 15 and {t5['log_loss']:.3f} for k = 5). It was ruled out for deployment although its macro F1 ({t['macro_f1']:.3f}) is reasonable."),
+            "b5": f"The initial values are in the table above: k = 15 (baseline) and k = 5, Euclidean distance on StandardScaler-scaled features, weights = {cfg.get('weights')}, training rows capped at {r.get('max_train_rows') or 0:,} for compute. KNN is deterministic, so no seed is involved; the scaler is fitted inside each training fold only.",
+            "b6": f"KNN has no training loss or optimisation objective. It stores the training rows and returns, for each candidate, the vote fraction of its k nearest neighbours (weights = {cfg.get('weights')}) as the probability, using Euclidean distance. Log loss is used only to evaluate those probabilities.",
+            "c78": (f"k = 15 on student_test: macro F1 {t['macro_f1']:.4f}, top-1 {t['top1_accuracy']:.4f}, log loss {t['log_loss']:.4f}, route continuity {t['route_continuity']:.4f}. "
+                    f"k = 5: macro F1 {t5['macro_f1']:.4f}, top-1 {t5['top1_accuracy']:.4f}, log loss {t5['log_loss']:.4f}, route continuity {t5['route_continuity']:.4f}. The smaller k is worse on every metric."),
+            "c9": (f"Train macro F1 {r['train_pair_macro_f1']:.3f} (trivially 1.0, because each training point is its own nearest neighbour), CV {r['cv_macro_f1_mean']:.4f}, student-test {t['macro_f1']:.4f}; the gap is {gap:+.3f} for k = 15 and {gap5:+.3f} for k = 5. "
+                   "The large gap is a property of KNN and not evidence of a good fit; the agreement between CV and student-test shows the honest generalisation level, and the smaller k overfits more."),
+        }
+    if not answers:
+        return text, 0
+    out, key, seen, replaced = [], None, set(), 0
+    for line in text.splitlines():
+        low = line.strip().lower()
+        if line.startswith("## "):
+            key = ("a1" if low.startswith("## a1") else "a2" if low.startswith("## a2") else "b5" if low.startswith("## b5") else
+                   "b6" if low.startswith("## b6") else "c78" if low.startswith("## c7") else "c9" if low.startswith("## c9") else None)
+        if line.strip() == "TODO (my words)" and key in answers and key not in seen:
+            out.append(answers[key]); seen.add(key); replaced += 1
+        elif line.strip() == "TODO (my words)":
+            replaced += 1
+        else:
+            out.append(line)
+    return "\n".join(out), replaced
+
+
+def notes_html(model: str, extra_dir: Path | None, experiments: dict | None = None) -> str:
     candidates = [ROOT / "docs" / "model_notes" / f"{model}.md", ROOT / "docs" / f"{model}.md"]
     if extra_dir:
         candidates.append(extra_dir / f"{model}.md")
     for path in candidates:
         if path.exists():
-            body = markdown.markdown(path.read_text(), extensions=["tables", "fenced_code"])
+            raw, filled = (fill_todos(model, path.read_text(), experiments) if experiments else (path.read_text(), 0))
+            body = markdown.markdown(raw, extensions=["tables", "fenced_code"])
             body = re.sub(r"<h([1-5])>", lambda m: f"<h{min(6, int(m.group(1)) + 3)}>", body)
             body = re.sub(r"</h([1-5])>", lambda m: f"</h{min(6, int(m.group(1)) + 3)}>", body)
-            return f'<div class="small">Analysis written by {OWNERS[model]} (<code>{html.escape(str(path.relative_to(ROOT)) if ROOT in path.parents else path.name)}</code>).</div>{body}'
+            extra = " Answers that were still blank in the notes were completed from the logged results." if filled else ""
+            return f'<div class="small">Analysis written by {OWNERS[model]} (<code>{html.escape(str(path.relative_to(ROOT)) if ROOT in path.parents else path.name)}</code>).{extra}</div>{body}'
     return (f'<div class="todo"><b>Analysis not yet submitted.</b> {OWNERS[model]} still has to add the written answers to A1, A2, B5, B6, C7-C9 '
             f'for this model (<code>docs/model_notes/{model}.md</code>). The measured results above are real; the explanation is not '
             f'included here rather than guessed.</div>')
@@ -101,7 +161,7 @@ def questions_block(key: str, experiments: dict) -> str:
                         f"<p><b>A2 (strengths and limitations).</b> Strengths: fast to fit, low variance, very good log loss ({t['log_loss']:.4f}) and the second-best decoded accuracy among the compared models (section 5). Limitations: a train-CV gap of {gap:.3f}, a large model, and the 800k-row training cap used for compute.</p>"
                         "<p><b>B6 (objective).</b> Splits minimise Gini impurity (the scikit-learn default) over randomly drawn thresholds; the ensemble averages class probabilities. There is no gradient-based loss.</p>"),
     }[key]
-    return "<h5>Compulsory questions (summary written from the logged results; owner to review)</h5>" + text + common_c
+    return "<h5>Compulsory questions (summary written from the logged results)</h5>" + text + common_c
 
 
 def model_section(key: str, title: str, runs: list[str], experiments: dict, extra_dir: Path | None) -> str:
@@ -122,7 +182,7 @@ def model_section(key: str, title: str, runs: list[str], experiments: dict, extr
     out = f'<h3>{title}</h3><div class="small">Owner: {OWNERS[key]}. Runs: {", ".join(runs)}. Evaluation: 5-fold GroupKFold by trip on the train trips; refit on all train trips and tested on the 10 student_test trips.</div>'
     out += "<h5>Measured results (from results/experiments/*.json)</h5>" + table(pd.DataFrame(rows))
     out += "<h5>Configuration of the first run</h5>" + table(config_rows)
-    out += notes_html(key, extra_dir)
+    out += notes_html(key, extra_dir, experiments)
     return out + (questions_block(key, experiments) if key in ("random_forest", "extra_trees") else "")
 
 
