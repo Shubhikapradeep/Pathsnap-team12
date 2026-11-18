@@ -6,4 +6,6 @@ __pycache__/
 data/
 .ipynb_checkpoints/
 models/*.joblib
+*.log
+.cache/
 report/*.html
