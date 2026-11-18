@@ -1,0 +1,23 @@
+{
+  "model": "lightgbm",
+  "best_trial_number": 1,
+  "best_cv_log_loss": 0.03830033251095112,
+  "best_params": {
+    "num_leaves": 81,
+    "learning_rate": 0.08341106432362087,
+    "n_estimators": 110,
+    "min_child_samples": 454,
+    "subsample": 0.9162213204002109,
+    "colsample_bytree": 0.6061695553391381,
+    "reg_lambda": 0.005337032762603957,
+    "reg_alpha": 0.00541524411940254
+  },
+  "cv_macro_f1_mean": 0.9331285769522847,
+  "cv_top1_mean": 0.8760884726412073,
+  "cv_log_loss_std": 0.009549755226938551,
+  "total_trials": 16,
+  "completed_trials": 9,
+  "elapsed_seconds": 0,
+  "seed": 42,
+  "n_splits": 5
+}
