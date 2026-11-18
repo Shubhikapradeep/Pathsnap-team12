@@ -4,7 +4,7 @@ Goal: map-match noisy GPS to a road network. Pipeline:
 GPS point -> candidate arcs -> classifier scores each (point, arc) pair -> HMM/Viterbi picks a connected route
 -> FastAPI (Laptop 1) -> UI (Laptop 2).
 
-**First evaluation covers: 5+ models, Bayesian tuning, and HMM/Viterbi.** API, UI and report follow.
+**First review (feature engineering + first five models): done.** Remaining work, owners and order: `docs/REMAINING_WORK.md`.
 
 ## Status
 
@@ -14,15 +14,15 @@ GPS point -> candidate arcs -> classifier scores each (point, arc) pair -> HMM/V
 | 2 | Reference labels + candidate generation | Shubhika | done |
 | 3 | Feature engineering + dataset build | Shubhika | done |
 | 4 | Shared evaluation harness | Shubhika | done (`src/pathsnap/evaluation.py`) |
-| 5a | Logistic Regression, KNN | Atharva | **to do** |
-| 5b | Random Forest, Extra Trees | Yashvantha | **to do** |
-| 5c | LightGBM, MLP | Tanish (Mac) | **to do** |
+| 5a | Logistic Regression, KNN | Atharva | done (notes still missing) |
+| 5b | Random Forest, Extra Trees | Yashvantha | done (notes done) |
+| 5c | LightGBM, MLP | Tanish (Mac) | done (notes in `docs/`, move to `docs/model_notes/`) |
 | 5d | CPU standby models (HistGB, XGBoost, GaussianNB, Decision Tree) | whoever needs them | ready (`docs/STANDBY_MODELS.md`) |
-| 6 | Model comparison table + plots | Shubhika (Mac) | after 5 |
-| 7 | Bayesian optimisation (Optuna) of best model | **Yashvantha** (heaviest compute, non-Mac) with Tanish's search-space handover | after 6 |
-| 8 | HMM + Viterbi route reconstruction | Shubhika; Atharva reviews and tests | **decoder built and tested on branch `feat/hmm`** with a development stand-in classifier; must be re-run with the final chosen model's probabilities (`python scripts/05_tune_hmm.py --probs <model>`) |
-| 9 | FastAPI backend (Laptop 1) | Atharva | can start now with a stub model |
-| 10 | Evaluator UI (Laptop 2) | Tanish | can start now against the stub API |
+| 6 | Model comparison table + plots | Shubhika (Mac) | done: `scripts/06_compare_models.py`; re-run after every new result |
+| 7 | Bayesian optimisation (Optuna) of best model | **Yashvantha** (fallback Tanish); spec in `docs/BAYESIAN_OPT.md` | **to do**; starts once the final model is chosen |
+| 8 | HMM + Viterbi route reconstruction | Shubhika; Atharva reviews and tests | decoder built and tuned (`src/pathsnap/hmm.py`, `scripts/05_tune_hmm.py`); final run uses the chosen model's probabilities |
+| 9 | FastAPI backend (Laptop 1) | Atharva | **to do**; nothing pushed yet except `api/schemas.py` |
+| 10 | Evaluator UI (Laptop 2) | Tanish | **to do**; nothing pushed yet except `ui/mock/` |
 | 11 | Folium maps, report PDF | everyone writes their own model sections; Shubhika assembles | last |
 
 Workload per person: Shubhika - pipeline, comparison, HMM, report assembly. Atharva - 2 light models, API, HMM tests.

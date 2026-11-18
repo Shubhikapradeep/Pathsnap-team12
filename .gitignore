@@ -8,3 +8,4 @@ data/
 models/*.joblib
 *.log
 .cache/
+report/*.html
