@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#f5f7f8" />
+    <title>PathSnap · Route evaluator</title>
+    <link rel="preconnect" href="https://unpkg.com" />
+    <link rel="preconnect" href="https://tile.openstreetmap.org" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="./" aria-label="PathSnap evaluator home">
+        <span class="brand-mark" aria-hidden="true">P</span>
+        <span><strong>PathSnap</strong><small>ROUTE EVALUATOR · TEAM 12</small></span>
+      </a>
+      <div class="connection-wrap">
+        <span id="connection-dot" class="connection-dot" aria-hidden="true"></span>
+        <span id="connection-label" class="connection-label">Connecting…</span>
+        <span id="api-address" class="api-address"></span>
+      </div>
+      <button id="settings-open" class="button button-quiet" type="button">Settings</button>
+    </header>
+
+    <main class="workspace">
+      <aside class="sidebar" aria-label="Trip selection">
+        <div class="sidebar-heading">
+          <div><p class="eyebrow">EVALUATION SET</p><h1>Choose a trip</h1></div>
+          <span id="trip-count" class="count-pill">—</span>
+        </div>
+        <p class="muted intro">Select a GPS trace, then run it through the live evaluator.</p>
+        <div id="trip-state" class="inline-state" role="status" aria-live="polite">Loading trips…</div>
+        <div id="trip-list" class="trip-list" role="listbox" aria-label="Available trips"></div>
+        <div class="sidebar-action">
+          <div id="selected-summary" class="selected-summary">Select a trip to continue</div>
+          <button id="run-button" class="button button-primary" type="button" disabled>
+            <span class="button-icon" aria-hidden="true">▶</span><span>Run prediction</span>
+          </button>
+          <p id="run-state" class="run-state" role="status" aria-live="polite"></p>
+        </div>
+      </aside>
+
+      <section class="main-panel" aria-label="Prediction results">
+        <div class="map-card">
+          <div id="map" role="application" aria-label="Map showing GPS observations and predicted routes"></div>
+          <div id="map-empty" class="map-empty">
+            <span class="map-empty-icon" aria-hidden="true">⌖</span>
+            <strong>Your route will appear here</strong>
+            <span>Choose a trip and run a prediction to explore its GPS trace.</span>
+          </div>
+          <div id="map-notice" class="map-notice" hidden></div>
+          <div id="map-legend" class="map-legend" hidden>
+            <span><i class="legend-dot"></i>GPS observations</span>
+            <span><i class="legend-line classifier"></i>Classifier</span>
+            <span><i class="legend-line hmm"></i>Classifier + HMM</span>
+          </div>
+        </div>
+
+        <section class="results" aria-labelledby="results-title">
+          <div class="results-header">
+            <div><p class="eyebrow">PREDICTION SUMMARY</p><h2 id="results-title">Results</h2></div>
+            <span id="result-trip" class="result-trip">Waiting for a prediction</span>
+          </div>
+          <div id="results-placeholder" class="results-placeholder">Accuracy and route metrics returned by the API will appear here.</div>
+          <div id="results-content" hidden>
+            <div class="metric-grid">
+              <article class="metric-card metric-primary"><span>Top-1 accuracy</span><strong id="metric-top1">—</strong><small>API reported</small></article>
+              <article class="metric-card"><span>Route continuity</span><strong id="metric-continuity">—</strong><small>API reported</small></article>
+              <article class="metric-card"><span>Route arc F1</span><strong id="metric-f1">—</strong><small>API reported</small></article>
+              <article class="metric-card"><span>GPS points</span><strong id="metric-points">—</strong><small id="metric-scored">Scored by API</small></article>
+            </div>
+            <div class="detail-grid">
+              <article class="detail-card">
+                <div class="detail-heading"><div><p class="eyebrow">DECODER IMPACT</p><h3>Classifier → + HMM</h3></div><span class="detail-note">API metrics</span></div>
+                <div id="comparison-list" class="comparison-list"></div>
+              </article>
+              <article class="detail-card run-details">
+                <div class="detail-heading"><div><p class="eyebrow">RUN DETAILS</p><h3>Evaluation</h3></div></div>
+                <dl>
+                  <div><dt>Model</dt><dd id="detail-model">—</dd></div>
+                  <div><dt>Processing time</dt><dd id="detail-time">—</dd></div>
+                  <div><dt>Candidate miss rate</dt><dd id="detail-miss">—</dd></div>
+                </dl>
+              </article>
+            </div>
+            <section id="warnings-section" class="warnings-section" hidden aria-labelledby="warnings-title">
+              <h3 id="warnings-title"><span aria-hidden="true">!</span> API warnings</h3>
+              <ul id="warnings-list"></ul>
+            </section>
+            <p id="mock-indicator" class="mock-indicator" hidden>Development mock response — these results are not from the live model.</p>
+          </div>
+        </section>
+
+        <details class="request-log">
+          <summary><span>Recent requests</span><span id="log-count" class="log-count">0</span></summary>
+          <ol id="request-log-list"><li class="log-empty">No requests yet.</li></ol>
+        </details>
+      </section>
+    </main>
+
+    <dialog id="settings-dialog" class="settings-dialog" aria-labelledby="settings-title">
+      <form id="settings-form" method="dialog">
+        <div class="dialog-heading"><div><p class="eyebrow">CONNECTION</p><h2 id="settings-title">Evaluator settings</h2></div><button id="settings-close" class="icon-button" type="button" aria-label="Close settings">×</button></div>
+        <label for="api-url">API base URL</label>
+        <input id="api-url" name="api-url" type="url" inputmode="url" placeholder="http://192.168.1.20:8000" required />
+        <p class="field-help">Enter the address of the API laptop, including the port. For example: http://192.168.1.20:8000</p>
+        <div id="health-result" class="health-result" role="status" aria-live="polite"></div>
+        <div class="dialog-actions"><button id="test-connection" class="button button-secondary" type="button">Test connection</button><button class="button button-primary" type="submit">Save address</button></div>
+      </form>
+    </dialog>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+    <script src="config.js"></script>
+    <script src="app.js" defer></script>
+  </body>
+</html>
