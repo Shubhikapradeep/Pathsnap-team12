@@ -108,8 +108,13 @@ docs/           plan, task sheets, API contract, UI spec, Bayesian spec, per-mod
 ## Use of AI tools
 [Team to complete according to the event's disclosure policy.]
 
-## Team
-Team 12: Shubhika, Atharva, Yashvantha, Tanish.
+## Team 12
+| Name | SRN |
+|---|---|
+| Atharva Ravi Jamakhandi | PES2UG24AM196 |
+| Tanish Mahadev Gupta | PES2UG24AM169 |
+| Yashavantha G | PES2UG24AM189 |
+| Shubhika Pradeep | PES2UG24AM157 |
 
 ---
 
