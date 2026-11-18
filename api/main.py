@@ -123,17 +123,37 @@ async def lifespan(app: FastAPI):
     logger.info(f"Resolved trip data folder: {APP_STATE['data_dir']}")
 
     use_stub = os.environ.get("USE_STUB", "0").lower() in ("1", "true", "yes")
-    model_path = Path(os.environ.get("PATHSNAP_MODEL", ROOT / "models" / "logreg.joblib"))
+    default_model = ROOT / "models" / "lightgbm.joblib"
+    if not default_model.exists():
+        default_model = ROOT / "models" / "logreg.joblib"
+    model_path = Path(os.environ.get("PATHSNAP_MODEL", default_model))
 
-    if not use_stub and model_path.exists():
+    if not use_stub:
+        if not model_path.exists():
+            raise RuntimeError(
+                f"Model file not found: {model_path}. "
+                "Train the model or set USE_STUB=1 to run with distance-based stub."
+            )
         try:
             APP_STATE["model"] = joblib.load(model_path)
             APP_STATE["model_name"] = model_path.stem
             logger.info(f"Loaded classifier model from {model_path}")
         except Exception as e:
-            logger.warning(f"Failed to load model {model_path}: {e}. Falling back to stub.")
-            APP_STATE["model"] = None
-            APP_STATE["model_name"] = "stub_distance"
+            raise RuntimeError(f"Failed to load model {model_path}: {e}")
+
+        # Load tuned HMM parameters from results if available
+        params_file = ROOT / "results" / f"hmm_{APP_STATE['model_name']}" / "best_params.json"
+        if not params_file.exists():
+            params_file = ROOT / "results" / "hmm_lightgbm" / "best_params.json"
+        if params_file.exists():
+            try:
+                import json
+                raw = json.loads(params_file.read_text())
+                fields = set(HmmParams.__dataclass_fields__.keys())
+                APP_STATE["hmm_params"] = HmmParams(**{k: v for k, v in raw.items() if k in fields})
+                logger.info(f"Loaded tuned HMM parameters from {params_file}: {APP_STATE['hmm_params']}")
+            except Exception as e:
+                logger.warning(f"Could not parse {params_file}: {e}, using default HmmParams")
     else:
         APP_STATE["model"] = None
         APP_STATE["model_name"] = "stub_distance"
@@ -272,28 +292,42 @@ def run_pipeline(trip_id: str, custom_scorer: Callable[[pd.DataFrame], np.ndarra
     # 9. Server-side metrics computation (truth_arc is NEVER exposed to UI)
     scored_mask = clf_predicted >= 0
     n_scored = int(scored_mask.sum())
-    cand_miss_rate = float(1.0 - (n_scored / n_points)) if n_points > 0 else 0.0
+
+    # Candidate miss rate: share of observations whose reference arc is missing from candidate arcs
+    if truth_arc is not None and len(pairs) > 0:
+        cand_pairs = pairs[["obs_idx", "arc_id"]]
+        truth_df = pd.DataFrame({"obs_idx": np.arange(len(truth_arc)), "truth_arc": truth_arc})
+        merged_truth = cand_pairs.merge(truth_df, left_on=["obs_idx", "arc_id"], right_on=["obs_idx", "truth_arc"])
+        hits = set(merged_truth.obs_idx.unique())
+        cand_miss_rate = float(1.0 - (len(hits) / n_points)) if n_points > 0 else 0.0
+    else:
+        cand_miss_rate = float(1.0 - (n_scored / n_points)) if n_points > 0 else 0.0
 
     def compute_route_metrics(pred_arcs: np.ndarray) -> RouteMetrics:
         if truth_arc is None:
-            # If no ground truth route provided, report 0.0
             return RouteMetrics(top1_accuracy=0.0, route_continuity=0.0, route_arc_f1=0.0)
 
         # Top-1 observation accuracy
         top1 = float((pred_arcs == truth_arc).mean())
 
-        # Continuity
-        valid = pred_arcs >= 0
-        df_pred = pd.DataFrame({
-            "trip_id": trip_id,
-            "obs_idx": np.arange(n_points)[valid],
-            "pred_arc": pred_arcs[valid],
-        })
-        cont = _continuity(df_pred, "pred_arc", partition) if len(df_pred) > 0 else 0.0
+        # Continuity: computed directly from trip.arcs in memory (independent of partition folder!)
+        valid_idx = np.flatnonzero(pred_arcs >= 0)
+        if len(valid_idx) > 1:
+            consecutive = np.diff(valid_idx) == 1
+            if np.any(consecutive):
+                a = pred_arcs[valid_idx[:-1]][consecutive]
+                b = pred_arcs[valid_idx[1:]][consecutive]
+                same = a == b
+                connected = trip.arcs[a, 1] == trip.arcs[b, 0]
+                cont = float((same | connected).sum() / consecutive.sum())
+            else:
+                cont = 0.0
+        else:
+            cont = 0.0
 
         # Arc-set F1
         truth_set = set(truth_arc.tolist())
-        pred_set = set(pred_arcs[valid].tolist())
+        pred_set = set(pred_arcs[valid_idx].tolist())
         hit = len(truth_set & pred_set)
         p = hit / len(pred_set) if pred_set else 0.0
         r = hit / len(truth_set) if truth_set else 0.0

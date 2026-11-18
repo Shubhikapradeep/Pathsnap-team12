@@ -9,3 +9,4 @@ models/*.joblib
 *.log
 .cache/
 report/*.html
+*.zip
