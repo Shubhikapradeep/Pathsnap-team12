@@ -23,12 +23,12 @@ ROOT = Path(__file__).resolve().parents[1]
 RES = ROOT / "results"
 REPO_URL = "https://github.com/Shubhikapradeep/Pathsnap-team12"
 OWNERS = {"logreg": "Atharva", "knn": "Atharva", "random_forest": "Yashvantha", "extra_trees": "Yashvantha",
-          "lightgbm": "Tanish", "mlp": "Tanish"}
+          "lightgbm": "Tanish", "mlp": "Tanish", "bayesian": "Yashvantha"}
 MAIN_MODELS = [("logreg", "Logistic Regression", ["logreg", "logreg_c0p1", "logreg_balanced"]),
                ("knn", "K-Nearest Neighbours", ["knn", "knn_k5"]),
                ("random_forest", "Random Forest", ["random_forest"]),
                ("extra_trees", "Extra Trees", ["extra_trees"]),
-               ("lightgbm", "LightGBM", ["lightgbm"]),
+               ("lightgbm", "LightGBM (untuned and Bayesian-tuned)", ["lightgbm", "lightgbm_tuned"]),
                ("mlp", "MLP (neural network)", ["mlp"])]
 
 CSS = """
@@ -202,19 +202,27 @@ def main() -> None:
     parts.append('<h2 class="pb">4. Bayesian hyperparameter optimisation</h2>')
     best = RES / "bayesian" / "best_params.json"
     if best.exists():
-        summ = json.loads((RES / "bayesian" / "summary.json").read_text()) if (RES / "bayesian" / "summary.json").exists() else {}
+        info = json.loads(best.read_text())
         trials = pd.read_csv(RES / "bayesian" / "trials.csv")
-        parts.append("<p>Results of the committed search (<code>results/bayesian/</code>):</p>" + table(pd.DataFrame([summ]).T.reset_index().rename(columns={"index": "item", 0: "value"})) +
-                     "<h4>Best parameters</h4><pre>" + html.escape(best.read_text()) + "</pre>")
-        if "lightgbm_tuned" in ex:
-            parts.append("<h4>Tuned versus untuned</h4>" + table(comparison[comparison.model.isin(["lightgbm", "lightgbm_tuned"])].drop(columns=["key_config"])))
-        parts.append(figure("results/figures/bayesian_history.png", "Optimisation history.", "70%") + figure("results/figures/bayesian_param_importance.png", "Hyperparameter importance.", "70%"))
+        spent = pd.to_timedelta(trials.duration).sum()
+        counts = trials.state.value_counts().to_dict()
+        overview = pd.DataFrame({"item": ["model", "sampler / pruner", "objective", "planned trials", "trials explored (rows in trials.csv)", "completed / pruned / failed",
+                                          "search time (sum of trial durations)", "best trial", "best mean CV log loss", "its CV macro F1 / CV top-1", "seed"],
+                                 "value": [info["model"], "Optuna TPE / MedianPruner", "minimise mean 5-fold GroupKFold CV log loss (train trips only)", "30 (stopped early)",
+                                           len(trials), f'{counts.get("COMPLETE", 0)} / {counts.get("PRUNED", 0)} / {counts.get("FAIL", 0)}', str(spent).replace("0 days ", ""),
+                                           info["best_trial_number"], f'{info["best_cv_log_loss"]:.4f}', f'{info["cv_macro_f1_mean"]:.4f} / {info["cv_top1_mean"]:.4f}', info["seed"]]})
+        space = pd.DataFrame({"hyperparameter": list(info["best_params"]), "best value": [f"{v:.5g}" for v in info["best_params"].values()]})
+        parts.append("<p>Bayesian optimisation (Optuna TPE) of the LightGBM classifier. The student_test partition was never used inside a trial. "
+                     "The search was stopped after 15 trials because of time, so the best configuration is the best among the explored trials, not a proven global optimum. "
+                     "Pruned trials report only their partial (early-fold) loss in <code>trials.csv</code>, so the table's best value is taken from completed trials.</p>"
+                     + table(overview) + "<h4>Best hyperparameters</h4>" + table(space))
+        both = comparison[comparison.model.isin(["lightgbm", "lightgbm_tuned"])]
+        parts.append("<h4>Tuned versus untuned (same folds, same partitions, same metrics)</h4>" +
+                     table(both[["model", "cv_macro_f1", "cv_top1", "test_top1", "test_macro_f1", "test_log_loss", "test_route_continuity", "fit_seconds", "inference_ms_per_obs"]]))
+        parts.append(figure("results/figures/bayesian_optimisation_history.png", "Optimisation history.", "70%") + figure("results/figures/bayesian_parameter_importance.png", "Hyperparameter importance.", "70%"))
+        parts.append(notes_html("bayesian", args.notes_dir))
     else:
-        parts.append("<div class='todo'><b>Status at the time of this draft: the Bayesian optimisation run has not been committed yet.</b> "
-                     "No tuned results are reported here. The specification (<code>docs/BAYESIAN_OPT.md</code>) fixes: model LightGBM; Optuna TPE sampler (seed 42); "
-                     "objective = mean 5-fold GroupKFold CV log loss on the train trips only (student_test is never used inside a trial); 30 trials; search space over "
-                     "num_leaves, learning_rate, n_estimators, min_child_samples, subsample, colsample_bytree, reg_lambda and reg_alpha. "
-                     "Replace this section with the actual trial record, best values and the tuned-versus-untuned table when the run is finished (re-run this script).</div>")
+        parts.append("<div class='todo'>Bayesian optimisation results are not committed yet.</div>")
 
     # ---- 5 HMM
     parts.append('<h2 class="pb">5. HMM and Viterbi route reconstruction</h2>')
@@ -234,7 +242,7 @@ def main() -> None:
         for _, row in per_trip[per_trip.top1_change < 0].iterrows():
             losers.append(f"{model}, trip {row.trip_id}: top-1 {row.classifier_top1:.4f} to {row.hmm_top1:.4f} ({row.top1_change:+.4f})")
     parts.append("<h3>5.2 Where the HMM did not help</h3>" + ("<ul>" + "".join(f"<li>{x}</li>" for x in losers) + "</ul>" if losers else "<p>The HMM improved top-1 on every student_test trip for every evaluated model.</p>") +
-                 "<p>Ranking changes: Random Forest has the best pointwise top-1 but is third after decoding; LightGBM has the largest gain and the best decoded top-1, so it is the selected model. "
+                 "<p>Ranking changes: Random Forest has the best pointwise top-1 among the untuned models but is third after decoding; LightGBM has the largest gain and the best decoded top-1, so it was chosen for tuning. After Bayesian tuning, decoded top-1 is essentially the same as the untuned model (0.9269 versus 0.9275), but the tuned classifier has better probabilities (log loss 0.030 versus 0.057), higher classifier-only top-1 and continuity, and faster inference, so the Bayesian-tuned LightGBM is the final model. "
                  "Differences between the top three decoded models are about one point on 10 trips and should not be over-interpreted. Several tuned decoder parameters lie on the upper edge of the search grid, so a wider grid might change the numbers slightly.</p>")
 
     # ---- 6 maps
