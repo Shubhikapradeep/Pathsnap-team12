@@ -1,0 +1,3 @@
+partition,trip_id,pct_obs_far_from_route,reason
+train,00000033,59.0,reference route does not cover GPS track
+train,00000054,89.4,reference route does not cover GPS track
