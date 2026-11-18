@@ -65,6 +65,10 @@ The evaluator trips are never used for training, tuning or model choice, and mus
 # 7. feature evidence and Folium map
 .venv/bin/python scripts/08_feature_figures.py
 .venv/bin/python scripts/09_folium_trip.py student_test 00000052     # -> results/maps/
+# 8. prediction maps (classifier-only vs HMM) and report
+.venv/bin/python scripts/11_folium_predictions.py lightgbm 00000077
+.venv/bin/python scripts/12_report_figures.py
+.venv/bin/python scripts/13_build_report.py      # -> report/PathSnap_Team12_Report.html (print to PDF with Chrome)
 # tests
 .venv/bin/python -m pytest -q tests
 ```
