@@ -45,11 +45,17 @@ def build_table(records: list[dict]) -> pd.DataFrame:
 
 
 def bar(ax, table: pd.DataFrame, column: str, title: str, error: str | None = None) -> None:
-    ax.bar(table.model, table[column], yerr=table[error] if error else None, capsize=3, color="#3b6ea8")
-    ax.set_title(title)
-    ax.tick_params(axis="x", rotation=45)
-    for label in ax.get_xticklabels():
-        label.set_ha("right")
+    """Horizontal dot plot. Dots (not bars) so the axis can zoom without exaggerating differences from a zero baseline."""
+    positions = range(len(table))
+    ax.errorbar(table[column], positions, xerr=table[error] if error else None, fmt="o", color="#3b6ea8",
+                ecolor="#888888", capsize=3, markersize=7)
+    ax.set_yticks(list(positions))
+    ax.set_yticklabels(table.model)
+    ax.invert_yaxis()
+    ax.set_title(title, fontsize=10)
+    ax.grid(axis="x", alpha=0.3)
+    margin = (table[column].max() - table[column].min()) * 0.15 or 0.01
+    ax.set_xlim(table[column].min() - margin, table[column].max() + margin)
 
 
 def main() -> None:
@@ -68,7 +74,7 @@ def main() -> None:
     (args.out_dir / "model_comparison_table.md").write_text(view.to_markdown(index=False) if hasattr(view, "to_markdown") else view.to_string(index=False))
     print(view.to_string(index=False))
 
-    fig, axes = plt.subplots(2, 3, figsize=(15, 8))
+    fig, axes = plt.subplots(2, 3, figsize=(15, 7))
     bar(axes[0, 0], table, "cv_macro_f1", "CV macro F1 (mean ± std over 5 trip folds)", "cv_macro_f1_std")
     bar(axes[0, 1], table, "test_top1", "Student-test top-1 accuracy")
     bar(axes[0, 2], table, "test_macro_f1", "Student-test macro F1")
