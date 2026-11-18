@@ -59,7 +59,7 @@ def figure(rel: str, caption: str, width: str = "100%") -> str:
     path = ROOT / rel
     if not path.exists():
         return f'<div class="todo">Missing figure: <code>{html.escape(rel)}</code></div>'
-    return f'<figure><img style="width:{width}" src="data:image/png;base64,{b64(path)}"><figcaption>{html.escape(caption)}'\
+    return f'<figure><img style="width:{width}" src="data:image/{"jpeg" if path.suffix.lower() in (".jpg", ".jpeg") else "png"};base64,{b64(path)}"><figcaption>{html.escape(caption)}'\
            f' <span class="small">(source: <code>{html.escape(rel)}</code>)</span></figcaption></figure>'
 
 
@@ -271,7 +271,15 @@ def main() -> None:
                  "which runs the full pipeline (<code>src/pathsnap/pipeline.py</code>: projection, candidates, features, classifier, HMM) and scores the result against the reference route held server-side only. "
                  "Laptop 2 runs the UI, which lists the reserved trips, sends the chosen trip id to the API and draws the returned routes and metrics. The two laptops communicate over a phone hotspot.</p>"
                  f"<p>Classifier inference cost (from the experiment logs): LightGBM {comparison.set_index('model').loc['lightgbm', 'inference_ms_per_obs']:.3f} ms per GPS point, i.e. under one second for a 6,854-point trip.</p>"
-                 "<div class='todo'><b>Screenshots to insert after the two-laptop rehearsal:</b> (1) the working UI for at least one evaluator trip, (2) the API request log on Laptop 1, (3) a successful <code>/predict</code> response. These must be real screenshots from the final run.</div>")
+                 "")
+    shots_dir = ROOT / "report" / "screenshots"
+    captions = json.loads((shots_dir / "captions.json").read_text()) if (shots_dir / "captions.json").exists() else {}
+    shots = sorted(p for p in shots_dir.glob("*") if p.suffix.lower() in (".png", ".jpg", ".jpeg"))
+    for shot in shots:
+        parts.append(figure(str(shot.relative_to(ROOT)), captions.get(shot.name, "Screenshot (caption missing in report/screenshots/captions.json)."), "78%"))
+    if not any("ui" in shot.name.lower() for shot in shots):
+        parts.append("<div class='todo'><b>Still to add:</b> a screenshot of the working evaluator UI on Laptop 2, and API log lines for an evaluator trip run with the final model. "
+                     "Put them in <code>report/screenshots/</code>, describe them in <code>captions.json</code> and re-run this script.</div>")
 
     # ---- 8 limitations
     parts.append("<h2>8. Limitations, time constraints and reproducibility</h2>"

@@ -1,0 +1,3 @@
+{
+  "api_log_student_test_trip0_logreg.jpg": "API terminal on Laptop 1: the server starts, answers /health and /trips with 200, and POST /predict/00000000 returns 200 with top1=0.9501, continuity=0.9884 in 0.97 s. This is a student_test trip (a stand-in for the evaluator trips) and this early run loaded the logistic-regression model (models/logreg.joblib), not the final Bayesian-tuned LightGBM."
+}
