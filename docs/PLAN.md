@@ -20,7 +20,7 @@ GPS point -> candidate arcs -> classifier scores each (point, arc) pair -> HMM/V
 | 5d | CPU standby models (HistGB, XGBoost, GaussianNB, Decision Tree) | whoever needs them | ready (`docs/STANDBY_MODELS.md`) |
 | 6 | Model comparison table + plots | Shubhika (Mac) | after 5 |
 | 7 | Bayesian optimisation (Optuna) of best model | **Yashvantha** (heaviest compute, non-Mac) with Tanish's search-space handover | after 6 |
-| 8 | HMM + Viterbi route reconstruction | Shubhika; Atharva reviews and tests | after 6 (can start on out-of-fold probabilities from any finished model) |
+| 8 | HMM + Viterbi route reconstruction | Shubhika; Atharva reviews and tests | **decoder built and tested on branch `feat/hmm`** with a development stand-in classifier; must be re-run with the final chosen model's probabilities (`python scripts/05_tune_hmm.py --probs <model>`) |
 | 9 | FastAPI backend (Laptop 1) | Atharva | can start now with a stub model |
 | 10 | Evaluator UI (Laptop 2) | Tanish | can start now against the stub API |
 | 11 | Folium maps, report PDF | everyone writes their own model sections; Shubhika assembles | last |
