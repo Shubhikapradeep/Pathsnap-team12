@@ -22,6 +22,8 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parents[1]
 RES = ROOT / "results"
 REPO_URL = "https://github.com/Shubhikapradeep/Pathsnap-team12"
+TEAM = [("Atharva Ravi Jamakhandi", "PES2UG24AM196"), ("Tanish Mahadev Gupta", "PES2UG24AM169"),
+        ("Yashavantha G", "PES2UG24AM189"), ("Shubhika Pradeep", "PES2UG24AM157")]
 OWNERS = {"logreg": "Atharva", "knn": "Atharva", "random_forest": "Yashvantha", "extra_trees": "Yashvantha",
           "lightgbm": "Tanish", "mlp": "Tanish"}
 MAIN_MODELS = [("logreg", "Logistic Regression", ["logreg", "logreg_c0p1", "logreg_balanced"]),
@@ -127,8 +129,10 @@ def main() -> None:
     lon_span = (inventory.lon_min.min(), inventory.lon_max.max())
 
     parts: list[str] = []
+    team_rows = "".join(f"<tr><td>{n}</td><td>{srn}</td></tr>" for n, srn in TEAM)
     parts.append(f'<div class="cover"><h1>PathSnap: Distributed Map-Matching &amp; Route Reconstruction</h1><p style="font-size:14pt">Technical Report, Team 12</p>'
-                 f'<p>UE24CS352A Machine Learning Hackathon</p><p>Team members: Shubhikapradeep, Atharva, Yashvantha, Tanish</p>'
+                 f'<p>PES University, Department of Computer Science and Engineering<br>UE24CS352A: Machine Learning, Hackathon</p>'
+                 f'<table style="width:75%;margin:18pt auto;font-size:10.5pt"><tr><th>Team 12 member</th><th>SRN</th></tr>{team_rows}</table>'
                  f'<p class="small">Repository: {REPO_URL}</p><p class="small">All results in this report are generated from files in the repository '
                  f'(<code>results/</code>) by <code>scripts/13_build_report.py</code>.</p></div>')
 
