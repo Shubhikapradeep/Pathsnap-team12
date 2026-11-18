@@ -2,14 +2,23 @@
 
 **Owner: Yashvantha** (non-Mac machine, lightest delivered load so far). **Fallback: Tanish**, who owns LightGBM and
 could also run it: one LightGBM fit is only about 11 s on a Mac, so no GPU or special hardware is needed.
-Tanish supplies the search-space rationale in `docs/model_notes/lightgbm.md`; Yashvantha writes and runs the code.
+Tanish supplies the LightGBM search-space rationale in `docs/model_notes/lightgbm.md`; Yashvantha writes and runs the code.
 Branch: `feat/bayesian-opt`. Commits under your own identity.
 
-## Which model, and why
-**LightGBM.** It has the best CV macro F1 (0.929) and, after HMM decoding, the best student-test top-1 (0.928 versus 0.908 for MLP;
-`results/hmm_lightgbm/`, `results/hmm_mlp/`). It also has the most tunable regularisation, and it overfits slightly (train minus CV
-macro F1 = 0.021, log loss 0.057 versus 0.035 for MLP), which tuning can reduce. Confirm the choice with Shubhika before starting: it is
-final only after the five-model comparison is complete.
+## Which model, and why  (decide with Shubhika before starting)
+Do not start until the model is chosen. Pointwise results now put four models within about 1 point of top-1
+(student-test): Random Forest 0.878, MLP 0.876, Extra Trees 0.873, LightGBM 0.870 (`results/experiments/*.json`).
+Random Forest also has the best CV macro F1 (0.931) and log loss (0.032), but it overfits the most (train minus CV macro F1 = 0.038).
+The ranking can change after HMM decoding: it already did for MLP versus LightGBM (LightGBM 0.928, MLP 0.908; `results/hmm_lightgbm/`,
+`results/hmm_mlp/`). So the rule is:
+
+1. Run `python scripts/05_tune_hmm.py --probs <model>` for the top candidates (random_forest, extra_trees, lightgbm, mlp).
+2. Tune the model with the best top-1 **after HMM decoding**. If two are within noise, prefer the one that is cheaper to tune and has more
+   regularisation knobs. LightGBM fits in about 11 s per fold; Random Forest on 800k rows takes much longer per trial.
+3. Write the choice and the evidence in the report (model-selection section).
+
+The search space below is written for LightGBM. If another model wins, replace it with that model's parameters (for Random Forest:
+`n_estimators`, `max_depth`, `min_samples_leaf`, `max_features`, `max_samples`) and keep everything else in this spec unchanged.
 
 ## Hard rules
 * Optimise on **group-CV over the train trips only** (same `GroupKFold(5)` by trip as `src/pathsnap/evaluation.py`).
