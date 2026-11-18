@@ -25,6 +25,7 @@
   let map = null;
   let tileLayer = null;
   let gpsLayer = null;
+  let gpsRenderer = null;
   let classifierLayer = null;
   let hmmLayer = null;
   let layerControl = null;
@@ -186,21 +187,33 @@
   }
 
   function initMap() {
-    if (!window.L) {
-      setMapNotice("The map library could not load. Check this laptop's internet connection and reload the page.");
-      return;
-    }
-    map = L.map("map", { preferCanvas: true, zoomControl: false, scrollWheelZoom: true }).setView([0, 0], 2);
-    L.control.zoom({ position: "topright" }).addTo(map);
-    tileLayer = L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
-      maxZoom: 19,
-      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">OpenStreetMap</a> contributors',
-    }).addTo(map);
-    gpsLayer = L.layerGroup();
-    classifierLayer = L.layerGroup();
-    hmmLayer = L.layerGroup();
-    requestAnimationFrame(() => map.invalidateSize());
+  if (!window.L) {
+    setMapNotice("The map library could not load. Check this laptop's internet connection and reload the page.");
+    return;
   }
+
+  map = L.map("map", {
+    preferCanvas: true,
+    zoomControl: false,
+    scrollWheelZoom: true,
+  }).setView([0, 0], 2);
+
+  // Reuse one Canvas renderer for all GPS markers.
+  gpsRenderer = L.canvas({ padding: 0.5 });
+
+  L.control.zoom({ position: "topright" }).addTo(map);
+
+  tileLayer = L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    maxZoom: 19,
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">OpenStreetMap</a> contributors',
+  }).addTo(map);
+
+  gpsLayer = L.layerGroup();
+  classifierLayer = L.layerGroup();
+  hmmLayer = L.layerGroup();
+
+  requestAnimationFrame(() => map.invalidateSize());
+}
 
   function clearMapLayers() {
     if (!map) return;
@@ -224,7 +237,9 @@
     els.resultsPlaceholder.hidden = false;
     els.resultsContent.hidden = true;
     els.resultTrip.textContent = "Waiting for a prediction";
-    els.mockIndicator.hidden = true;
+    if(els.mockIndicator){
+      els.mockIndicator.hidden = true;
+    }
   }
 
   function startPrediction() {
@@ -296,67 +311,189 @@
   }
 
   function renderMap(data) {
-    if (!map) {
-      els.mapEmpty.hidden = true;
-      return;
-    }
-    clearMapLayers();
-    const gps = Array.isArray(data.gps) ? data.gps : [];
-    const pointArcs = data.per_point?.hmm_arc || [];
-    const bounds = [];
-    const step = gps.length > GPS_THRESHOLD ? Math.ceil(gps.length / GPS_THRESHOLD) : 1;
-    for (let index = 0; index < gps.length; index += step) {
-      const point = gps[index];
-      if (!Array.isArray(point) || !Number.isFinite(Number(point[0])) || !Number.isFinite(Number(point[1]))) continue;
-      const latLng = [Number(point[0]), Number(point[1])];
-      bounds.push(latLng);
-      const arcId = pointArcs[index];
-      const marker = L.circleMarker(latLng, {
-        renderer: L.canvas(), radius: gps.length > 1000 ? 2.5 : 3.5,
-        color: "#fff", weight: 1, fillColor: "#5886a2", fillOpacity: 0.84,
-      });
-      marker.bindPopup(pointPopup(index, point, arcId));
-      marker.bindTooltip(`Point ${index + 1}`, { direction: "top", opacity: 0.92 });
-      marker.addTo(gpsLayer);
-    }
-
-    addRouteSegments(data.classifier_route?.segments, classifierLayer, {
-      color: "#e88b3d", weight: 2.6, opacity: 0.86, lineCap: "round", lineJoin: "round",
-    }, bounds);
-    addRouteSegments(data.hmm_route?.segments, hmmLayer, {
-      color: "#16a36a", weight: 5, opacity: 0.92, lineCap: "round", lineJoin: "round",
-    }, bounds);
-
-    const gpsToggle = `GPS observations${step > 1 ? ` (1 in ${step})` : ""}`;
-    const overlays = { [gpsToggle]: gpsLayer, "Classifier route": classifierLayer, "Classifier + HMM": hmmLayer };
-    gpsLayer.addTo(map);
-    if (classifierLayer.getLayers().length) classifierLayer.addTo(map);
-    if (hmmLayer.getLayers().length) hmmLayer.addTo(map);
-    layerControl = L.control.layers({ "OpenStreetMap": tileLayer }, overlays, { collapsed: false, position: "topright" }).addTo(map);
-    els.mapLegend.hidden = false;
+  if (!map) {
     els.mapEmpty.hidden = true;
-    if (step > 1) setMapNotice(`Showing every ${step}th GPS observation to keep the map responsive (${gps.length.toLocaleString()} total).`);
-    else if (!gps.length) setMapNotice("This response contains no GPS observations.");
-    else if (!classifierLayer.getLayers().length && !hmmLayer.getLayers().length) setMapNotice("This response has an empty route geometry; there are no route lines to draw.");
-    else setMapNotice("");
-    if (bounds.length) map.fitBounds(L.latLngBounds(bounds), { padding: [38, 38], maxZoom: 16 });
-    requestAnimationFrame(() => map.invalidateSize());
+    return;
   }
 
-  function addRouteSegments(segments, targetLayer, style, bounds) {
-    if (!Array.isArray(segments)) return;
-    for (const segment of segments) {
-      if (!Array.isArray(segment)) continue;
-      const points = segment.filter((point) => Array.isArray(point) && Number.isFinite(Number(point[0])) && Number.isFinite(Number(point[1])))
-        .map((point) => [Number(point[0]), Number(point[1])]);
-      if (points.length < 2) {
-        if (points.length === 1) bounds.push(points[0]);
-        continue;
-      }
-      bounds.push(...points);
-      L.polyline(points, style).addTo(targetLayer);
-    }
+  clearMapLayers();
+
+  const gps = Array.isArray(data.gps) ? data.gps : [];
+  const pointArcs = data.per_point?.hmm_arc || [];
+  const bounds = [];
+
+  // Limit GPS markers to keep large trips responsive.
+  const step = gps.length > GPS_THRESHOLD
+    ? Math.ceil(gps.length / GPS_THRESHOLD)
+    : 1;
+
+  for (let index = 0; index < gps.length; index += step) {
+    const point = gps[index];
+
+    if (!isValidLatLng(point)) continue;
+
+    const latLng = [Number(point[0]), Number(point[1])];
+    bounds.push(latLng);
+
+    const arcId = pointArcs[index];
+
+    const marker = L.circleMarker(latLng, {
+      renderer: gpsRenderer,
+      radius: gps.length > 1000 ? 2.5 : 3.5,
+      color: "#fff",
+      weight: 1,
+      fillColor: "#5886a2",
+      fillOpacity: 0.84,
+    });
+
+    // Create popup content only when the marker is clicked.
+    marker.bindPopup(() => pointPopup(index, point, arcId));
+
+    marker.addTo(gpsLayer);
   }
+
+  addRouteSegments(
+    data.classifier_route?.segments,
+    classifierLayer,
+    {
+      color: "#e88b3d",
+      weight: 2.6,
+      opacity: 0.86,
+      lineCap: "round",
+      lineJoin: "round",
+    },
+    bounds
+  );
+
+  addRouteSegments(
+    data.hmm_route?.segments,
+    hmmLayer,
+    {
+      color: "#16a36a",
+      weight: 5,
+      opacity: 0.92,
+      lineCap: "round",
+      lineJoin: "round",
+    },
+    bounds
+  );
+
+  const gpsToggle = `GPS observations${step > 1 ? ` (1 in ${step})` : ""}`;
+
+  const overlays = {
+    [gpsToggle]: gpsLayer,
+    "Classifier route": classifierLayer,
+    "Classifier + HMM": hmmLayer,
+  };
+
+  gpsLayer.addTo(map);
+
+  if (classifierLayer.getLayers().length) {
+    classifierLayer.addTo(map);
+  }
+
+  if (hmmLayer.getLayers().length) {
+    hmmLayer.addTo(map);
+  }
+
+  layerControl = L.control.layers(
+    { "OpenStreetMap": tileLayer },
+    overlays,
+    { collapsed: false, position: "topright" }
+  ).addTo(map);
+
+  els.mapLegend.hidden = false;
+  els.mapEmpty.hidden = true;
+
+  if (step > 1) {
+    setMapNotice(
+      `Showing every ${step}th GPS observation to keep the map responsive (${gps.length.toLocaleString()} total).`
+    );
+  } else if (!gps.length) {
+    setMapNotice("This response contains no GPS observations.");
+  } else if (
+    !classifierLayer.getLayers().length &&
+    !hmmLayer.getLayers().length
+  ) {
+    setMapNotice("This response has an empty route geometry; there are no route lines to draw.");
+  } else {
+    setMapNotice("");
+  }
+
+  if (bounds.length) {
+    map.fitBounds(L.latLngBounds(bounds), {
+      padding: [38, 38],
+      maxZoom: 16,
+    });
+  }
+
+  requestAnimationFrame(() => map.invalidateSize());
+}
+
+ function addRouteSegments(segments, targetLayer, style, bounds) {
+  if (!Array.isArray(segments)) return;
+
+  const MAX_POINTS_PER_SEGMENT = 5000;
+
+  for (const segment of segments) {
+    if (!Array.isArray(segment)) continue;
+
+    const validPoints = segment
+      .filter(isValidLatLng)
+      .map(point => [Number(point[0]), Number(point[1])]);
+
+    if (validPoints.length === 0) continue;
+
+    if (validPoints.length === 1) {
+      bounds.push(validPoints[0]);
+      continue;
+    }
+
+    // Downsample very large routes while preserving the final endpoint.
+    const step = Math.max(
+      1,
+      Math.ceil(validPoints.length / MAX_POINTS_PER_SEGMENT)
+    );
+
+    const points = [];
+
+    for (let i = 0; i < validPoints.length; i += step) {
+      points.push(validPoints[i]);
+    }
+
+    const lastPoint = validPoints[validPoints.length - 1];
+    const lastAdded = points[points.length - 1];
+
+    if (
+      lastAdded[0] !== lastPoint[0] ||
+      lastAdded[1] !== lastPoint[1]
+    ) {
+      points.push(lastPoint);
+    }
+
+    bounds.push(...points);
+
+    L.polyline(points, style).addTo(targetLayer);
+  }
+}
+
+function isValidLatLng(point) {
+  if (!Array.isArray(point) || point.length < 2) {
+    return false;
+  }
+
+  const lat = Number(point[0]);
+  const lng = Number(point[1]);
+
+  return (
+    Number.isFinite(lat) &&
+    Number.isFinite(lng) &&
+    lat >= -90 &&
+    lat <= 90 &&
+    lng >= -180 &&
+    lng <= 180
+  );
+}
 
   function pointPopup(index, point, arcId) {
     const time = Number.isFinite(Number(point[2])) ? `${Number(point[2]).toLocaleString()} s` : "Not provided";
