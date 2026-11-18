@@ -245,6 +245,14 @@ def main() -> None:
                  "<p>Ranking changes: Random Forest has the best pointwise top-1 among the untuned models but is third after decoding; LightGBM has the largest gain and the best decoded top-1, so it was chosen for tuning. After Bayesian tuning, decoded top-1 is essentially the same as the untuned model (0.9269 versus 0.9275), but the tuned classifier has better probabilities (log loss 0.030 versus 0.057), higher classifier-only top-1 and continuity, and faster inference, so the Bayesian-tuned LightGBM is the final model. "
                  "Differences between the top three decoded models are about one point on 10 trips and should not be over-interpreted. Several tuned decoder parameters lie on the upper edge of the search grid, so a wider grid might change the numbers slightly.</p>")
 
+    final_trips = pd.read_csv(RES / "hmm_lightgbm_tuned" / "student_test_per_trip.csv", dtype={"trip_id": str})
+    parts.append("<h3>5.3 Final model (Bayesian-tuned LightGBM + HMM): per-trip results on student_test</h3>" +
+                 table(final_trips[["trip_id", "n_obs", "classifier_top1", "hmm_top1", "top1_change", "classifier_continuity", "hmm_continuity"]]) +
+                 f"<p>Top-1 after decoding ranges from {final_trips.hmm_top1.min():.3f} to {final_trips.hmm_top1.max():.3f} across the ten trips "
+                 f"(median {final_trips.hmm_top1.median():.3f}); the HMM improved {int((final_trips.top1_change > 0).sum())} of {len(final_trips)} trips. "
+                 "The hardest trip (00000077) stays lowest after decoding. These are development results: student_test was used to compare models, so they are slightly optimistic; "
+                 "the evaluator partition has not been used for any decision.</p>")
+
     # ---- 6 maps
     parts.append('<h2 class="pb">6. Geographical visualisation using Folium</h2>')
     parts.append("<p>The interactive Folium maps (layer control and legend) are committed as HTML: <code>results/maps/student_test_00000052_predictions.html</code>, "
@@ -262,12 +270,20 @@ def main() -> None:
                  "<div class='todo'><b>Screenshots to insert after the two-laptop rehearsal:</b> (1) the working UI for at least one evaluator trip, (2) the API request log on Laptop 1, (3) a successful <code>/predict</code> response. These must be real screenshots from the final run.</div>")
 
     # ---- 8 limitations
-    parts.append("<h2>8. Limitations and reproducibility</h2><ul>"
+    parts.append("<h2>8. Limitations, time constraints and reproducibility</h2>"
+                 "<p class='note'><b>Time constraint.</b> The project had to be finished before the 3 pm submission deadline. Several parts were therefore stopped early or simplified, "
+                 "and the results should be read with that in mind:</p><ul>"
+                 "<li><b>Bayesian optimisation</b> was stopped after 15 of the 30 planned trials (9 completed, 6 pruned, 1 failed); the best value was reached early and did not improve afterwards, so the chosen configuration is the best among the explored trials, not a proven optimum.</li>"
+                 "<li><b>No feature ablation</b> was run; feature choices are justified by design reasoning, distributions and one exploratory importance fit only.</li>"
+                 "<li><b>HMM decoder tuning</b> used a coarse 81-point grid on 26 of the 78 train trips for speed, and several tuned parameters lie on the edge of the grid, so a wider search could change the result slightly.</li>"
+                 "<li><b>Training-row caps</b> were used for compute: KNN 200k, Random Forest and Extra Trees 800k, MLP 1M candidate pairs; LightGBM and logistic regression used all rows. Caps are recorded in each experiment log.</li>"
+                 "<li>Model analysis depth differs between members; where a note is short it reflects the time available, and the measured results above remain the evidence.</li></ul>"
+                 "<h3>Other limitations</h3><ul>"
                  "<li>Reference labels are derived by alignment and may be truncated or imperfect (two train trips were excluded for this reason).</li>"
                  "<li>Arcs are straight segments between nodes; curved roads are approximated.</li>"
                  "<li>Some trips contain very large time gaps; the decoder cuts the chain there.</li>"
                  "<li>Tree ensembles use random sampling, so re-running them in a different environment can give slightly different numbers.</li>"
-                 "<li>No feature ablation was run.</li></ul>"
+                 "<li>Student_test was used for development-stage comparison, so its numbers are slightly optimistic relative to unseen data.</li></ul>"
                  f"<p>Reproduction commands are in the repository README ({REPO_URL}). Seeds are fixed (42) and every run is logged in <code>results/experiments/</code>.</p>")
 
     out_dir = ROOT / "report"
